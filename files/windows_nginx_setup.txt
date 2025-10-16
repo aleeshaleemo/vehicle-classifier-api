@@ -1,0 +1,210 @@
+# ============================================
+# Windows Server Setup with Nginx
+# ============================================
+
+# Run PowerShell as Administrator
+
+# ============================================
+# 1. INSTALL PYTHON
+# ============================================
+
+# Download Python 3.10+ from python.org
+# Install and check:
+python --version
+
+# ============================================
+# 2. SETUP PROJECT
+# ============================================
+
+# Create project directory
+cd C:\
+mkdir vehicle-api
+cd vehicle-api
+
+# Copy your files here:
+# - app.py (updated version)
+# - models\best.onnx
+# - requirements.txt
+
+# Create virtual environment
+python -m venv venv
+.\venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Test the API manually
+python app.py
+# Visit http://localhost:8000 to verify
+
+# ============================================
+# 3. INSTALL NGINX FOR WINDOWS
+# ============================================
+
+# Download nginx from: http://nginx.org/en/download.html
+# Extract to C:\nginx
+
+# ============================================
+# 4. CONFIGURE NGINX
+# ============================================
+
+# Edit C:\nginx\conf\nginx.conf
+# Replace the http block with:
+
+<#
+worker_processes  1;
+
+events {
+    worker_connections  1024;
+}
+
+http {
+    include       mime.types;
+    default_type  application/octet-stream;
+    sendfile        on;
+    keepalive_timeout  65;
+
+    # Increase client body size for uploads
+    client_max_body_size 50M;
+
+    upstream vehicle_api {
+        server 127.0.0.1:8000;
+    }
+
+    server {
+        listen       80;
+        server_name  localhost;
+
+        location / {
+            proxy_pass http://vehicle_api;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection 'upgrade';
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_cache_bypass $http_upgrade;
+            
+            # Timeouts
+            proxy_connect_timeout 300s;
+            proxy_send_timeout 300s;
+            proxy_read_timeout 300s;
+        }
+    }
+}
+#>
+
+# Save the file
+
+# ============================================
+# 5. INSTALL AS WINDOWS SERVICE (Using NSSM)
+# ============================================
+
+# Download NSSM from https://nssm.cc/download
+# Extract to C:\nssm
+
+# Install API as service
+cd C:\nssm\win64
+.\nssm install VehicleAPI "C:\vehicle-api\venv\Scripts\python.exe" "C:\vehicle-api\app.py"
+.\nssm set VehicleAPI AppDirectory "C:\vehicle-api"
+.\nssm set VehicleAPI DisplayName "Vehicle Classification API"
+.\nssm set VehicleAPI Description "FastAPI service for vehicle classification"
+.\nssm set VehicleAPI Start SERVICE_AUTO_START
+
+# Start the service
+.\nssm start VehicleAPI
+
+# Check status
+.\nssm status VehicleAPI
+
+# ============================================
+# 6. INSTALL NGINX AS SERVICE
+# ============================================
+
+cd C:\nssm\win64
+.\nssm install Nginx "C:\nginx\nginx.exe"
+.\nssm set Nginx AppDirectory "C:\nginx"
+.\nssm set Nginx DisplayName "Nginx Web Server"
+.\nssm set Nginx Description "Nginx reverse proxy"
+.\nssm set Nginx Start SERVICE_AUTO_START
+
+# Start nginx
+.\nssm start Nginx
+
+# ============================================
+# 7. CONFIGURE FIREWALL
+# ============================================
+
+# Allow HTTP traffic
+New-NetFirewallRule -DisplayName "Allow HTTP" -Direction Inbound -LocalPort 80 -Protocol TCP -Action Allow
+
+# Allow HTTPS (optional)
+New-NetFirewallRule -DisplayName "Allow HTTPS" -Direction Inbound -LocalPort 443 -Protocol TCP -Action Allow
+
+# ============================================
+# 8. TEST THE SETUP
+# ============================================
+
+# Test locally
+Invoke-WebRequest -Uri "http://localhost/health"
+
+# Test from another machine on network
+# http://YOUR_WINDOWS_SERVER_IP/health
+
+# ============================================
+# 9. MANAGE SERVICES
+# ============================================
+
+# Stop services
+.\nssm stop VehicleAPI
+.\nssm stop Nginx
+
+# Start services
+.\nssm start VehicleAPI
+.\nssm start Nginx
+
+# Restart services
+.\nssm restart VehicleAPI
+.\nssm restart Nginx
+
+# View logs
+Get-Content C:\vehicle-api\nssm.log -Tail 50 -Wait
+
+# ============================================
+# 10. UPDATE THE API
+# ============================================
+
+# Stop service
+cd C:\nssm\win64
+.\nssm stop VehicleAPI
+
+# Update files (app.py or model)
+# Copy new files to C:\vehicle-api\
+
+# Start service
+.\nssm start VehicleAPI
+
+# ============================================
+# TROUBLESHOOTING
+# ============================================
+
+# Check if services are running
+Get-Service | Where-Object {$_.Name -like "*Vehicle*"}
+Get-Service | Where-Object {$_.Name -like "*Nginx*"}
+
+# Check if port 8000 is listening
+netstat -ano | findstr :8000
+
+# Check if port 80 is listening
+netstat -ano | findstr :80
+
+# Test nginx configuration
+cd C:\nginx
+.\nginx.exe -t
+
+# Reload nginx
+.\nginx.exe -s reload
+
+# View Windows Event Logs
+Get-EventLog -LogName Application -Source "VehicleAPI" -Newest 10
